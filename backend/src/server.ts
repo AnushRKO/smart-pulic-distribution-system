@@ -22,7 +22,17 @@ const PORT = process.env.PORT || 3001;
 
 app.use(helmet());
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: (origin, callback) => {
+    const allowed = [
+      process.env.FRONTEND_URL || 'http://localhost:5173',
+      /\.vercel\.app$/,
+    ];
+    if (!origin) return callback(null, true); // server-to-server or same-origin
+    const isAllowed = allowed.some((p) =>
+      typeof p === 'string' ? p === origin : p.test(origin)
+    );
+    callback(isAllowed ? null : new Error('CORS not allowed'), isAllowed);
+  },
   credentials: true,
 }));
 app.use(morgan('dev'));
