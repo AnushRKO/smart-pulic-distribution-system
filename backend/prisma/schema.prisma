@@ -1,0 +1,374 @@
+// Smart PDS - Prisma Schema (SQLite - runs without any server install)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// NOTE: SQLite does not support enums.
+// All enum-like fields use String with validated values in application code.
+// Valid values are documented in comments.
+
+// ─── USER ─────────────────────────────────────────────────────────────────────
+// role:   BENEFICIARY | DISTRIBUTOR | GOVERNMENT_OFFICIAL | ADMINISTRATOR
+// status: ACTIVE | INACTIVE | SUSPENDED
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  passwordHash  String
+  firstName     String
+  lastName      String
+  phone         String?
+  role          String    @default("BENEFICIARY")
+  status        String    @default("ACTIVE")
+  lastLoginAt   DateTime?
+  avatarUrl     String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  beneficiary   Beneficiary?
+  distributor   Distributor?
+  notifications Notification[]
+  auditLogs     AuditLog[]
+  createdByLogs AuditLog[]     @relation("CreatedByUser")
+
+  @@index([email])
+  @@index([role])
+  @@map("users")
+}
+
+// ─── BENEFICIARY ──────────────────────────────────────────────────────────────
+
+model Beneficiary {
+  id            String    @id @default(uuid())
+  userId        String    @unique
+  beneficiaryId String    @unique
+  dateOfBirth   DateTime?
+  gender        String?
+  address       String?
+  district      String?
+  state         String?
+  pincode       String?
+  aadharNumber  String?   @unique
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rationCard    RationCard?
+  distributions Distribution[]
+  transactions  Transaction[]
+
+  @@index([beneficiaryId])
+  @@index([district])
+  @@map("beneficiaries")
+}
+
+// ─── RATION CARD ──────────────────────────────────────────────────────────────
+// cardType: APL | BPL | AAY | PHH
+// status:   ACTIVE | SUSPENDED | EXPIRED | PENDING
+
+model RationCard {
+  id             String    @id @default(uuid())
+  cardNumber     String    @unique
+  cardType       String    @default("BPL")
+  beneficiaryId  String    @unique
+  assignedShopId String?
+  issueDate      DateTime
+  expiryDate     DateTime?
+  status         String    @default("ACTIVE")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  beneficiary   Beneficiary    @relation(fields: [beneficiaryId], references: [id], onDelete: Cascade)
+  assignedShop  Shop?          @relation(fields: [assignedShopId], references: [id])
+  familyMembers FamilyMember[]
+  entitlements  Entitlement[]
+  transactions  Transaction[]
+
+  @@index([cardNumber])
+  @@index([beneficiaryId])
+  @@map("ration_cards")
+}
+
+// ─── FAMILY MEMBER ────────────────────────────────────────────────────────────
+
+model FamilyMember {
+  id           String    @id @default(uuid())
+  rationCardId String
+  name         String
+  dateOfBirth  DateTime?
+  gender       String?
+  relationship String
+  aadharNumber String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  rationCard   RationCard @relation(fields: [rationCardId], references: [id], onDelete: Cascade)
+
+  @@index([rationCardId])
+  @@map("family_members")
+}
+
+// ─── DISTRIBUTOR ──────────────────────────────────────────────────────────────
+
+model Distributor {
+  id            String   @id @default(uuid())
+  userId        String   @unique
+  distributorId String   @unique
+  licenseNumber String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shops Shop[]
+
+  @@map("distributors")
+}
+
+// ─── SHOP ─────────────────────────────────────────────────────────────────────
+// status: ACTIVE | INACTIVE | SUSPENDED
+
+model Shop {
+  id            String   @id @default(uuid())
+  shopId        String   @unique
+  name          String
+  address       String
+  area          String?
+  district      String?
+  state         String?
+  phone         String?
+  distributorId String?
+  status        String   @default("ACTIVE")
+  latitude      Float?
+  longitude     Float?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  distributor   Distributor?   @relation(fields: [distributorId], references: [id])
+  inventory     Inventory[]
+  rationCards   RationCard[]
+  distributions Distribution[]
+  transactions  Transaction[]
+
+  @@index([district])
+  @@map("shops")
+}
+
+// ─── COMMODITY ────────────────────────────────────────────────────────────────
+// unit:   KG | LITER | GRAM | PIECE | QUINTAL
+// status: ACTIVE | INACTIVE
+
+model Commodity {
+  id             String   @id @default(uuid())
+  commodityCode  String   @unique
+  name           String
+  unit           String   @default("KG")
+  description    String?
+  subsidizedRate Float
+  marketRate     Float?
+  status         String   @default("ACTIVE")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  inventory     Inventory[]
+  entitlements  Entitlement[]
+  distributions Distribution[]
+  transactions  Transaction[]
+
+  @@map("commodities")
+}
+
+// ─── INVENTORY ────────────────────────────────────────────────────────────────
+// status: AVAILABLE | LOW_STOCK | OUT_OF_STOCK
+
+model Inventory {
+  id               String   @id @default(uuid())
+  shopId           String
+  commodityId      String
+  openingStock     Float    @default(0)
+  receivedStock    Float    @default(0)
+  distributedStock Float    @default(0)
+  availableStock   Float    @default(0)
+  threshold        Float    @default(100)
+  status           String   @default("AVAILABLE")
+  lastUpdatedAt    DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  shop         Shop                   @relation(fields: [shopId], references: [id])
+  commodity    Commodity              @relation(fields: [commodityId], references: [id])
+  transactions InventoryTransaction[]
+
+  @@unique([shopId, commodityId])
+  @@index([shopId])
+  @@index([commodityId])
+  @@index([status])
+  @@map("inventory")
+}
+
+// ─── INVENTORY TRANSACTION ────────────────────────────────────────────────────
+
+model InventoryTransaction {
+  id            String   @id @default(uuid())
+  inventoryId   String
+  type          String
+  quantity      Float
+  previousStock Float
+  newStock      Float
+  notes         String?
+  createdById   String?
+  createdAt     DateTime @default(now())
+
+  inventory Inventory @relation(fields: [inventoryId], references: [id])
+
+  @@index([inventoryId])
+  @@map("inventory_transactions")
+}
+
+// ─── ENTITLEMENT ──────────────────────────────────────────────────────────────
+
+model Entitlement {
+  id                 String   @id @default(uuid())
+  rationCardId       String
+  commodityId        String
+  monthlyQuota       Float
+  collectedThisMonth Float    @default(0)
+  lastResetDate      DateTime @default(now())
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  rationCard RationCard @relation(fields: [rationCardId], references: [id], onDelete: Cascade)
+  commodity  Commodity  @relation(fields: [commodityId], references: [id])
+
+  @@unique([rationCardId, commodityId])
+  @@index([rationCardId])
+  @@map("entitlements")
+}
+
+// ─── DISTRIBUTION ─────────────────────────────────────────────────────────────
+
+model Distribution {
+  id              String   @id @default(uuid())
+  distributionId  String   @unique
+  beneficiaryId   String
+  shopId          String
+  commodityId     String
+  quantity        Float
+  distributedById String?
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  beneficiary Beneficiary  @relation(fields: [beneficiaryId], references: [id])
+  shop        Shop         @relation(fields: [shopId], references: [id])
+  commodity   Commodity    @relation(fields: [commodityId], references: [id])
+  transaction Transaction?
+
+  @@index([beneficiaryId])
+  @@index([shopId])
+  @@index([createdAt])
+  @@map("distributions")
+}
+
+// ─── TRANSACTION ──────────────────────────────────────────────────────────────
+// status: COMPLETED | PENDING | CANCELLED | FAILED
+
+model Transaction {
+  id             String   @id @default(uuid())
+  transactionId  String   @unique
+  beneficiaryId  String
+  rationCardId   String
+  shopId         String
+  commodityId    String
+  distributionId String?  @unique
+  quantity       Float
+  unitPrice      Float
+  totalAmount    Float
+  status         String   @default("COMPLETED")
+  month          Int
+  year           Int
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  beneficiary  Beneficiary   @relation(fields: [beneficiaryId], references: [id])
+  rationCard   RationCard    @relation(fields: [rationCardId], references: [id])
+  shop         Shop          @relation(fields: [shopId], references: [id])
+  commodity    Commodity     @relation(fields: [commodityId], references: [id])
+  distribution Distribution? @relation(fields: [distributionId], references: [id])
+
+  @@index([beneficiaryId])
+  @@index([shopId])
+  @@index([status])
+  @@index([month, year])
+  @@index([createdAt])
+  @@map("transactions")
+}
+
+// ─── NOTIFICATION ─────────────────────────────────────────────────────────────
+// type:   STOCK_AVAILABLE | LOW_STOCK | OUT_OF_STOCK | DISTRIBUTION_COMPLETED | ACCOUNT | SYSTEM | ALERT
+// status: UNREAD | READ
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String   @default("SYSTEM")
+  title     String
+  message   String
+  status    String   @default("UNREAD")
+  metadata  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@map("notifications")
+}
+
+// ─── AUDIT LOG ────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id            String   @id @default(uuid())
+  userId        String?
+  performedById String?
+  action        String
+  entity        String?
+  entityId      String?
+  description   String
+  ipAddress     String?
+  userAgent     String?
+  metadata      String?
+  createdAt     DateTime @default(now())
+
+  user        User? @relation(fields: [userId], references: [id])
+  performedBy User? @relation("CreatedByUser", fields: [performedById], references: [id])
+
+  @@index([userId])
+  @@index([action])
+  @@index([entity])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ─── SYSTEM SETTINGS ─────────────────────────────────────────────────────────
+
+model SystemSetting {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  label     String?
+  category  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("system_settings")
+}
